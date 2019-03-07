@@ -6,6 +6,8 @@ from styx_msgs.msg import Lane, Waypoint
 
 import math
 
+from scipy.spatial import cKDTree, distance
+
 '''
 This node will publish waypoints from the car's current position to some `x` distance ahead.
 
@@ -38,15 +40,52 @@ class WaypointUpdater(object):
 
         # TODO: Add other member variables you need below
 
-        rospy.spin()
+	self.base_waypoints = None
+	self.waypoints_xy = None
+	self.waypoints_build_cKDTree = None
+	self.pose = None
+
+	self.set_rate()
+
+    def set_rate(self):
+	# Set looping rate to 50 Hz
+	rate = rospy.Rate(50)
+	while not rospy.is_shutdown():
+	    if self.pose and self.base_waypoints:
+		self.calculate_final_waypoints()
+	    rate.sleep
 
     def pose_cb(self, msg):
         # TODO: Implement
-        pass
+	self.pose = msg
 
-    def waypoints_cb(self, waypoints):
+    def waypoints_cb(self, waypoints):	# waypoints callback function
         # TODO: Implement
-        pass
+	# Store waypoints
+	self.base_waypoints = waypoints
+	# Find 200 closest waypoints ahead of the car
+	# Use k-nearest-neighbor-algorithm to find closest waypoints (cKDTree)
+	# Waypoint_xy has to be initialized before subscriber 
+	if not self.waypoints_xy:
+	    # Get x and y position of each waypoint
+	    self.waypoints_xy = [[waypoint.pose.pose.position.x, waypoint.pose.pose.position.y] for waypoint in self.base_waypoints.waypoints]
+	    self.waypoints_build_cKDTree = cKDTree(self.waypoints_xy)	
+
+    def calculate_final_waypoints(self):
+	# Query the tree for closest nearest neighbor
+	_, index_closest = self.waypoints_build_cKDTree.query([self.pose.pose.position.x, self.pose.pose.position.y], k=1)
+	# Check if closest waypoint is ahead of car
+	# Get closest waypoints x and y coordinates
+	closest_xy = self.waypoints_xy[index_closest]
+	previous_xy = self.waypoints_xy[index_closest - 1]
+	# Use cosine similarity to check if closest waypoint is ahead of car
+	cosine_similarity = 1 - distance.cosine(previous_xy, closest_xy)
+	# If cosine_similarity = [0,1] -> closest waypoint is ahead of car
+	if not cosine_similarity >= 0 and cosine_similarity <= 1:
+	    index_closest = index_closest + 1
+	lane = Lane()
+	lane.waypoints = self.base_waypoints.waypoints[index_closest:(index_closest+LOOKAHEAD_WPS)]
+	self.final_waypoints_pub.publish(lane)
 
     def traffic_cb(self, msg):
         # TODO: Callback for /traffic_waypoint message. Implement
